@@ -16,6 +16,9 @@ from pyDOE import lhs #Latin Hypercube Sampling
 import seaborn as sns
 import codecs, json
 
+''' Note: 1. burgers_shock_mu_01_pi.mat == burgers_shock.mat
+- mu = 0.01/pi, IC: -sin(pi*x), BC: u(−1, t) = u(1, t) = 0 '''
+
 # generates same random numbers each time
 np.random.seed(1234)
 tf.random.set_seed(1234)
@@ -95,10 +98,10 @@ def trainingdata(N_u, N_f):
     u_train = all_u_train[idx,:] # choose corresponding u
     
     '''Collocation Points'''
-    # LAtin Hypercube sampling for collocation points
+    # Latin Hypercube sampling for collocation points
     # N_f sets of tuples(x,t)
     X_f_train = lb + (ub-lb) * lhs(2,N_f) 
-    '''lhs(2,N_f): produces matrix (2,5) with value between zero and one (Latin Hypercube Sampling)'''
+    '''lhs(2,N_f): produces matrix (2,N_f) with value between zero and one (Latin Hypercube Sampling)'''
     X_f_train = np.vstack((X_f_train, X_u_train)) # append training points to collocation points
     
     return X_f_train, X_u_train, u_train
@@ -136,7 +139,7 @@ class Sequentialmodel(tf.Module):
         a = x
         
         for i in range(len(layers)-2):
-            z = tf.add(tf.matmul(a,self.W[2*i]),self.W[2*i+1])
+            z = tf.add(tf.matmul(a,self.W[2*i]),self.W[2*i+1]) # tf.matlul = multiplies matrix a by matrix b; a*x + b
             a = tf.nn.tanh(z)
         
         a = tf.add(tf.matmul(a,self.W[-2]),self.W[-1]) # For regression, no activation to last layer
@@ -176,7 +179,7 @@ class Sequentialmodel(tf.Module):
     
     def loss_PDE(self, x_to_train_f):
         g = tf.Variable(x_to_train_f, dtype='float64', trainable=False)
-        nu = 0.01/np.PINF
+        nu = 0.01/np.pi
         
         x_f = g[:,0:1]
         t_f = g[:,1:2]
@@ -195,7 +198,7 @@ class Sequentialmodel(tf.Module):
         
         del tape
         
-        f = u_t + (self.evaluate(g))*(u_x) - (nu) * u_xx
+        f = u_t + (self.evaluate(g))*(u_x) - (nu) * u_xx #####################
         
         loss_f = tf.reduce_mean(tf.square(f))
         
@@ -213,7 +216,7 @@ class Sequentialmodel(tf.Module):
         self.set_weights(parameters)
         
         with tf.GradientTape() as tape:
-            tape.watch(self.trainable_variables)
+            tape.watch(self.trainable_variables) # trainable_variables is W (w+b)
             loss_val, loss_u, loss_f = self.loss(X_u_train, u_train, X_f_train)
         
         grads = tape.gradient(loss_val, self.trainable_variables)
@@ -257,7 +260,7 @@ def solutionplot(u_pred, X_u_train, u_train):
     fig.colorbar(h, cax=cax)
     
     ax.plot(X_u_train[:,1],X_u_train[:,0], 'kx', label = 'Data (%d points)' 
-            %(u_train.shape[0]), marketsize = 4, clip_on = False)
+            %(u_train.shape[0]), markersize = 4, clip_on = False)
     
     line = np.linspace(x.min(), x.max(), 2)[:,None]
     ax.plot(t[25]*np.ones((2,1)), line, 'w-', linewidth=1)
@@ -326,7 +329,7 @@ layers = np.array([2,20,20,20,20,20,20,20,20,1]) # 8 hidden layers
 
 PINN = Sequentialmodel(layers)
 
-init_params = PINN.get_weights().numpy()
+init_params = PINN.get_weights().numpy() # [.... W_i, b_i ....] 1D array
 
 start_time = time.time()
 # If jac is True, fun is assumed to return the gradient along with the objective function
@@ -346,9 +349,9 @@ results = scipy.optimize.minimize(fun=PINN.optimizerfunc,
                                           'gtol': 5e-8,
                                           'maxfun': 50000,
                                           'maxiter': 5000,
-                                          'iprint': -1, 
+                                          'iprint': -1, # Controls the frequency of output.
           # Print update every 50 iterations
-                                          'maxls': 50})
+                                          'maxls': 50}) # Default 20
 
 elapsed = time.time() - start_time
 print('Training time: %.2f' %(elapsed))
