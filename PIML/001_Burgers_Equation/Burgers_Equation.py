@@ -13,15 +13,29 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.mplot3d import Axes3D
 import time
 from pyDOE import lhs #Latin Hypercube Sampling
+'''Latin Hypercube sampling is a method that can be used to sample random
+numbers in which samples are distributed evenly over the same space.
+It is widely used to generate samples that are known as controlled random
+samples and it often applied in Monte Carlo analysis because it can dramatically
+reduce the number of simulation needed to achive accurate results.'''
 import seaborn as sns
 import codecs, json
 
 ''' Note: 1. burgers_shock_mu_01_pi.mat == burgers_shock.mat
 - mu = 0.01/pi, IC: -sin(pi*x), BC: u(−1, t) = u(1, t) = 0 '''
 
-# generates same random numbers each time
 np.random.seed(1234)
+# generates same random numbers each time
+# pseudo-random numbers: a number that's almost random, but not really random.
+#                      : a computer-generated random number.
+#                      : are computer generated numbers that appear random, but actually predetermined.
+'''If you ask the same question, you will get the same answer every time.
+Like: If the input is the same, then output should be the same.''' 
+# This help us that when we run the code again, we get the same result.
+# np.random.seed makes your code repeatable and easier to share.
 tf.random.set_seed(1234)
+# Same as numpy but set for tensorflow
+
 
 print("TensorFlow version: {}".format(tf.__version__))
 
@@ -92,8 +106,9 @@ def trainingdata(N_u, N_f):
     
     # Choose random N_u points for training
     idx = np.random.choice(all_X_u_train.shape[0], N_u, replace = False)
-    '''np,random.choice(n,size, replace=False) 
-    Generate a uniform random sample from np.range(n)of size "size" without replacement'''
+    '''np.random.choice(n,size, replace=False) 
+    Generate a uniform random sample from np.range(n)of size "size" without replacement
+    replacement: default is true, meaning that a value of a can be selected mutiple times.'''
     X_u_train = all_X_u_train[idx,:] # choose indices from set 'idx' (x,t)
     u_train = all_u_train[idx,:] # choose corresponding u
     
@@ -101,7 +116,9 @@ def trainingdata(N_u, N_f):
     # Latin Hypercube sampling for collocation points
     # N_f sets of tuples(x,t)
     X_f_train = lb + (ub-lb) * lhs(2,N_f) 
-    '''lhs(2,N_f): produces matrix (2,N_f) with value between zero and one (Latin Hypercube Sampling)'''
+    '''lhs(2,N_f): produces matrix (2,N_f) with value between zero and one (Latin Hypercube Sampling)
+    lhs: it partitions each input distribution into N intervals of equal probability, and selects one sameple 
+    from each interval.'''
     X_f_train = np.vstack((X_f_train, X_u_train)) # append training points to collocation points
     
     return X_f_train, X_u_train, u_train
@@ -121,15 +138,28 @@ class Sequentialmodel(tf.Module):
             input_dim = layers[i]
             output_dim = layers[i+1]
             
-            # Xavier standard deviation
+            # It's important not to skip initialization.
+            # Chosing the right initializer is important to our model's performance and training.
+            # Uniform Xavier initianlization: draw each weight, w, from a random uniform
+            # distribution in [-x,x] for x = sqrt(6.0/(inputs+outputs))
+            # Normal Xavier initialization: draw each weight, w, from a normal distribution wich
+            # mean of 0, and a standard deviation = sqrt(2.0/(inputs+outputs))
             std_dv = np.sqrt((2.0/(input_dim + output_dim)))
+            # Xavier initialization: also known as Glorot initialization.
             
             #weights = normal distribution * Xavier standard deviation + 0
             w = tf.random.normal([input_dim, output_dim], dtype='float64') * std_dv
-            w = tf.Variable(w,trainable=True,name='w'+str(i+1))
-            b = tf.Variable(tf.cast(tf.zeros([output_dim]),dtype='float64'),trainable=True,name='b'+str(i+1))
             
+            w = tf.Variable(w,trainable=True,name='w'+str(i+1))
+            # The distinction between trainable True and False is used to let 
+            # Optimizers know which variables they can act upon
+            # trainable=True: automatically adds the variable to the 
+            # GraphKeys.TRAINABLE_VARIABLES collection
+            b = tf.Variable(tf.cast(tf.zeros([output_dim]),dtype='float64'),trainable=True,name='b'+str(i+1))
+            # tf.zeros([n]) create a zeros vector (n,0)
+            # tf.cast(): casts a tensor to a new type.
             self.W.append(w)
+            # .append(w): Append values to the end of an array.
             self.W.append(b)
             
             self.parameters += input_dim * output_dim + output_dim
@@ -139,8 +169,11 @@ class Sequentialmodel(tf.Module):
         a = x
         
         for i in range(len(layers)-2):
-            z = tf.add(tf.matmul(a,self.W[2*i]),self.W[2*i+1]) # tf.matlul = multiplies matrix a by matrix b; a*x + b
+            z = tf.add(tf.matmul(a,self.W[2*i]),self.W[2*i+1]) 
+            # tf.matlul: multiplies matrix a by matrix b; a*x
+            # tf.add: returns the addition of the two tf.tensor objects element wise. a*x + b
             a = tf.nn.tanh(z)
+            # tf.nn.tanh(z): computes hyperbolic tangent of z element-wise.
         
         a = tf.add(tf.matmul(a,self.W[-2]),self.W[-1]) # For regression, no activation to last layer
         return a
@@ -149,25 +182,32 @@ class Sequentialmodel(tf.Module):
         parameters_1d = [] # [.... W_i, b_i ....] 1D array
         
         for i in range(len(layers)-1):
-            w_1d = tf.reshape(self.W[2*i],[-1]) # Flatten weights
+            w_1d = tf.reshape(self.W[2*i],[-1]) # Flatten weights (..,0)
+            # tf.reshape(tensor, shape): a shape of [-1] flattens into 1-D.
             b_1d = tf.reshape(self.W[2*i+1],[-1]) # Flatten biases
             
             parameters_1d = tf.concat([parameters_1d,w_1d],0) # concat weights
+            # tf.concat(values, axis): concatenates tensors along one dimension.
+            # axis=0: row, axis=1: column
             parameters_1d = tf.concat([parameters_1d,b_1d],0) # concat biases
-        
         return parameters_1d
     
     def set_weights(self, parameters):
         for i in range(len(layers)-1):
             shape_w = tf.shape(self.W[2*i]).numpy() # Shape of the weight tensor
+            # .numpy(): converts tf.Variable to a numpy array.
             size_w = tf.size(self.W[2*i]).numpy() # Size of the weight tensor
             
             shape_b = tf.shape(self.W[2*i+1]).numpy() # Shape of the bias tensor
             size_b  = tf.size(self.W[2*i+1]).numpy() # Size of the bias tensor
             
             pick_w = parameters[0:size_w] # Pick the weights
-            self.W[2*i].assign(tf.reshape(pick_w,shape_w)) # assign
+            self.W[2*i].assign(tf.reshape(pick_w,shape_w)) 
+            # assign(): assign a new value to a tf.Variable().
+            # Assign 1-D to 2-D so it has to be reshape before.
             parameters = np.delete(parameters, np.arange(size_w),0) # delete
+            # np.delete: Return a new array with sub-arrays along an axis deleted. 
+            # For a one dimensional array, this returns those entries not returned by arr[obj].
             
             pick_b = parameters[0:size_b] # Pick the biases
             self.W[2*i+1].assign(tf.reshape(pick_b,shape_b)) # assign
@@ -175,6 +215,7 @@ class Sequentialmodel(tf.Module):
             
     def loss_BC(self,x,y):
         loss_u = tf.reduce_mean(tf.square(y-self.evaluate(x)))
+        # tf.reduce_mean(x): computes the mean of elements across dimensions of a tensor.
         return loss_u
     
     def loss_PDE(self, x_to_train_f):
@@ -183,31 +224,28 @@ class Sequentialmodel(tf.Module):
         
         x_f = g[:,0:1]
         t_f = g[:,1:2]
-        
+        # tf.GradientTape: Record operations for automatic differentiation.
         with tf.GradientTape(persistent=True) as tape:
             tape.watch(x_f)
             tape.watch(t_f)
-            
+            # Trainable variables are automatically watched.
             g = tf.stack([x_f[:,0],t_f[:,0]], axis=1)
             
             z = self.evaluate(g)
-            u_x = tape.gradient(z,x_f)
-        
+            u_x = tape.gradient(z,x_f) 
+        # Computes the gradient using operations recorded in context of this tape.
         u_t = tape.gradient(z,t_f)
         u_xx = tape.gradient(u_x, x_f)
-        
         del tape
         
-        f = u_t + (self.evaluate(g))*(u_x) - (nu) * u_xx #####################
-        
+        # Burgers equation:u + u*u_x - nu*u_xx = 0
+        f = u_t + (self.evaluate(g))*(u_x) - (nu) * u_xx 
         loss_f = tf.reduce_mean(tf.square(f))
-        
         return loss_f
     
     def loss(self,x,y,g):
         loss_u = self.loss_BC(x,y)
         loss_f = self.loss_PDE(g)
-        
         loss = loss_u + loss_f
         
         return loss, loss_u, loss_f
@@ -218,9 +256,7 @@ class Sequentialmodel(tf.Module):
         with tf.GradientTape() as tape:
             tape.watch(self.trainable_variables) # trainable_variables is W (w+b)
             loss_val, loss_u, loss_f = self.loss(X_u_train, u_train, X_f_train)
-        
         grads = tape.gradient(loss_val, self.trainable_variables)
-        
         del tape
         
         grads_1d = [] # flatten grads
@@ -238,7 +274,10 @@ class Sequentialmodel(tf.Module):
         loss_value, loss_u, loss_f = self.loss(X_u_train, u_train, X_f_train)
         u_pred = self.evaluate(X_u_test)
         error_vec = np.linalg.norm((u-u_pred),2)/np.linalg.norm(u,2)
-        
+        # np.linalg.norm(x,2): This is the square root of the sum of squared elements 
+        # and can be interpreted as the length of the vector in Euclidean space.
+        # Note: np.linalg.norm(x,2) = sqrt(|x1|**2+|x2|**2|)
+        # Note: np.linalg.norm(x,3) = (|x1|**3 + |x2|**3)**(1/3)
         tf.print(loss_value, loss_u, loss_f, error_vec)
     
 
@@ -332,7 +371,7 @@ PINN = Sequentialmodel(layers)
 init_params = PINN.get_weights().numpy() # [.... W_i, b_i ....] 1D array
 
 start_time = time.time()
-# If jac is True, fun is assumed to return the gradient along with the objective function
+#This method returns the time as a floating point number expressed in seconds since the epoch, in UTC.
 
 # train the model with Scipy L-BFGS optimizer
 results = scipy.optimize.minimize(fun=PINN.optimizerfunc,
@@ -347,11 +386,27 @@ results = scipy.optimize.minimize(fun=PINN.optimizerfunc,
                                           'ftol': 1*np.finfo(float).eps,
           # The iteration stops when (f^k-f^{k+1})/max{|f^k|,|f^{k+1}|,1} <=ftol
                                           'gtol': 5e-8,
-                                          'maxfun': 50000,
-                                          'maxiter': 5000,
-                                          'iprint': -1, # Controls the frequency of output.
-          # Print update every 50 iterations
-                                          'maxls': 50}) # Default 20
+          # The iteration will stop when max{|proj g_i | i = 1, ..., n} <= gtol 
+          # where pg_i is the i-th component of the projected gradient.
+                                          'maxfun': 50000, # Maximum number of function evaluations.
+                                          'maxiter': 5000, # Maximum number of iterations.
+                                          'iprint': -1,
+          # Controls the frequency of output. iprint < 0 means no output.
+                                          'maxls': 50})
+          # Maximum number of line search steps (per iteration). Default is 20.
+'''Limited-memory BFGS (L-BFGS): an optimization algorithm in the family of 
+quasi-Newton methods that approximates the Broyden-Fletcher-Goldfarb-Shanno algorithm
+using a limited amount of computer memory.
+The algorithm's target problem is to minimize f(x) over unconstrained values of 
+the real-vector x where f is a differentiable scala function.
+
+The L-BFGS-B algorithm extends L-BFGS to handle simple box constraints (aka bound 
+constraints) on variables; that is, constraints of the form li ≤ xi ≤ ui where li 
+and ui are per-variable constant lower and upper bounds, respectively (for each xi, 
+either or both bounds may be omitted). The method works by identifying fixed and 
+free variables at every step (using a simple gradient method), and then using the 
+L-BFGS method on the free variables only to get higher accuracy, and then repeating the process.
+'''
 
 elapsed = time.time() - start_time
 print('Training time: %.2f' %(elapsed))
