@@ -238,7 +238,7 @@ class Sequentialmodel(tf.Module):
         u_xx = tape.gradient(u_x, x_f)
         del tape
         
-        # Burgers equation:u + u*u_x - nu*u_xx = 0
+        # Burgers equation:u + u*u_x - nu*u_xx = 0, IC: -sin(pi*x)
         f = u_t + (self.evaluate(g))*(u_x) - (nu) * u_xx 
         loss_f = tf.reduce_mean(tf.square(f))
         return loss_f
@@ -284,10 +284,10 @@ class Sequentialmodel(tf.Module):
 ##############################################################################
 # SOLUTION PLOT #
 def solutionplot(u_pred, X_u_train, u_train):
-    fig, ax = plt.subplots()
-    ax.axis('off')
+    fig, ax = plt.subplots() # Create a figure and a set of subplots.
+    ax.axis('off') # Turns off axes in subplots.
     
-    gs0 = gridspec.GridSpec(1,2)
+    gs0 = gridspec.GridSpec(1,2) # A grid layout to place subplots within a figure.
     gs0.update(top=1-0.06,bottom=1-1/3, left=0.15, right=0.85, wspace=0)
     ax=plt.subplot(gs0[:,:])
     
