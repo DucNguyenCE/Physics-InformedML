@@ -21,8 +21,10 @@ reduce the number of simulation needed to achive accurate results.'''
 import seaborn as sns
 import codecs, json
 
-''' Note: 1. burgers_shock_mu_01_pi.mat == burgers_shock.mat
-- mu = 0.01/pi, IC: -sin(pi*x), BC: u(−1, t) = u(1, t) = 0 '''
+''' 001_burgers_shock_mu_01_pi.mat
+u_t + u*u_x - (0.01/pi)*u_xx = 0, -1<=x <=1, 0<= t < 1
+                         IC: -sin(pi*x), 
+                         BC: u(−1, t) = u(1, t) = 0 '''
 
 np.random.seed(1234)
 # generates same random numbers each time
