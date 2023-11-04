@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jan  4 00:51:43 2023
+
+@author: nguyenvanduc
+"""
+
 import tensorflow as tf
 import datetime, os
 #hide tf logs
@@ -77,15 +85,13 @@ class Sequentialmodel(tf.Module):
             u_lb = self.evaluate(x_lb)
             u_ub = self.evaluate(x_ub)
             
-            u_ub_x = tape.gradient(u_ub,x_ub)
-            u_ub_xx = tape.gradient(u_ub_x,x_ub)
-            u_ub_xxx = tape.gradient(u_ub_xx,x_ub)
+        u_ub_x = tape.gradient(u_ub,x_ub)
         u_lb_x = tape.gradient(u_lb,x_lb)
         del tape
         loss_bc1 = tf.reduce_mean(tf.square(u_lb))
         loss_bc2 = tf.reduce_mean(tf.square(u_lb_x))
-        loss_bc3 = tf.reduce_mean(tf.square(u_ub_xx))
-        loss_bc4 = tf.reduce_mean(tf.square(u_ub_xxx))
+        loss_bc3 = tf.reduce_mean(tf.square(u_ub))
+        loss_bc4 = tf.reduce_mean(tf.square(u_ub_x))
         return loss_bc1, loss_bc2, loss_bc3, loss_bc4
     
     def loss_PDE(self, x_to_train_f):
@@ -137,9 +143,7 @@ class Sequentialmodel(tf.Module):
         global counter
         if counter % 100 == 0:
             loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_train, lb, ub)
-            u_pred = self.evaluate(x_test)
-            error_vec = np.linalg.norm((u-u_pred),2)/np.linalg.norm(u,2)
-            tf.print(counter, loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4, error_vec)
+            tf.print(counter, loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4)
         counter += 1
 ##############################################################################
 # DATA PREP #
@@ -148,7 +152,6 @@ test = np.loadtxt("test.dat")
 x_train = train[:,0:1]
 x_test = test[:,0:1]
 counter = 0
-u = x_test**2  * (6 - 4*x_test +x_test**2)/ 24
 
 
 
@@ -194,10 +197,13 @@ fig, ax = plt.subplots()
 ax.plot(x_train, y_train,'bo', linewidth=2.0)
 ax.plot(x_test, y_test, linewidth=2.0)
 ax.set(xlim=(-0.1, 1.1), xticks=np.arange(0, 1),
-       ylim=(-0.2, 0.1), yticks=np.arange(-0.2, 0.1))
+       ylim=(-0.0027, 0.0001), yticks=np.arange(-0.0027, 0.0001))
 
 plt.show()
 
+y_max = PINN.evaluate([[1/2]])
+y_e  = 1/384
+tf.print(y_max, y_e)
 
 
 

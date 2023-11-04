@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jan  4 00:51:43 2023
+
+@author: nguyenvanduc
+"""
+
 import tensorflow as tf
 import datetime, os
 #hide tf logs
@@ -38,7 +46,7 @@ class Sequentialmodel(tf.Module):
             self.parameters += input_dim * output_dim + output_dim
             
     def evaluate(self,x):
-        x = (x-lb)/(ub-lb)
+        # x = (x-lb)/(ub-lb)
         a = x
         for i in range(len(layers)-2):
             z = tf.add(tf.matmul(a,self.W[2*i]),self.W[2*i+1]) 
@@ -68,56 +76,57 @@ class Sequentialmodel(tf.Module):
             self.W[2*i+1].assign(tf.reshape(pick_b,shape_b))
             parameters = np.delete(parameters, np.arange(size_b),0)
             
-    def loss_BC(self,lb,ub):
-        x_lb = tf.Variable(lb, dtype='float64', trainable=False)
-        x_ub = tf.Variable(ub, dtype='float64', trainable=False)
+    def loss_BC(self,x):
+        x_lb = tf.Variable(x[0:1,:], dtype='float64', trainable=False)
+        x_ub = tf.Variable(x[-1:,:], dtype='float64', trainable=False)
         with tf.GradientTape(persistent=True) as tape:
             tape.watch(x_lb)
             tape.watch(x_ub)
             u_lb = self.evaluate(x_lb)
+            u_lb_x = tape.gradient(u_lb,x_lb)
+            u_lb_xx = tape.gradient(u_lb_x,x_lb)
             u_ub = self.evaluate(x_ub)
-            
             u_ub_x = tape.gradient(u_ub,x_ub)
-            u_ub_xx = tape.gradient(u_ub_x,x_ub)
-            u_ub_xxx = tape.gradient(u_ub_xx,x_ub)
-        u_lb_x = tape.gradient(u_lb,x_lb)
+            u_ub_xx = tape.gradient(u_ub_x,x_ub)    
+        u_lb_xxx = tape.gradient(u_lb_xx,x_lb)
+        u_ub_xxx = tape.gradient(u_ub_xx,x_ub)
         del tape
-        loss_bc1 = tf.reduce_mean(tf.square(u_lb))
-        loss_bc2 = tf.reduce_mean(tf.square(u_lb_x))
-        loss_bc3 = tf.reduce_mean(tf.square(u_ub_xx))
-        loss_bc4 = tf.reduce_mean(tf.square(u_ub_xxx))
+        loss_bc1 = x[0][1]*tf.reduce_mean(tf.square(u_lb)) + abs(x[0][1]-1)*tf.reduce_mean(tf.square(u_lb_xx))
+        loss_bc2 = x[0][2]*tf.reduce_mean(tf.square(u_lb_x)) + abs(x[0][2]-1)*tf.reduce_mean(tf.square(u_lb_xxx))
+        loss_bc3 = x[0][3]*tf.reduce_mean(tf.square(u_ub)) + abs(x[0][3]-1)*tf.reduce_mean(tf.square(u_ub_xx))
+        loss_bc4 = x[0][4]*tf.reduce_mean(tf.square(u_ub_x)) + abs(x[0][4]-1)*tf.reduce_mean(tf.square(u_ub_xxx))
         return loss_bc1, loss_bc2, loss_bc3, loss_bc4
     
     def loss_PDE(self, x_to_train_f):
-        g = tf.Variable(x_to_train_f, dtype='float64', trainable=False)
-        
-        x_f = g[:,0:1]
+        x_f = tf.Variable(x_to_train_f, dtype='float64', trainable=False)
         with tf.GradientTape(persistent=True) as tape:
             tape.watch(x_f)            
             z = self.evaluate(x_f)
             u_x = tape.gradient(z,x_f)
             u_xx = tape.gradient(u_x,x_f)
             u_xxx = tape.gradient(u_xx,x_f)
-            u_xxxx = tape.gradient(u_xxx,x_f)
-        # Computes the gradient using operations recorded in context of this tape.
+        u_xxxx = tape.gradient(u_xxx,x_f)
         del tape
         
-        # Burgers equation:u + u*u_x - nu*u_xx = 0, IC: -sin(pi*x)
         f = u_xxxx + 1 
         loss_f = tf.reduce_mean(tf.square(f))
         return loss_f
     
-    def loss(self,x,lb,ub):
-        loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss_BC(lb, ub)
-        loss_pde = self.loss_PDE(x)        
+    def loss(self, x):
+        loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss_BC(x)
+        loss_pde = self.loss_PDE(x)
         return loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4
     
     def optimizerfunc(self, parameters):
         self.set_weights(parameters)
         
+        BCi =np.random.randint(len(EBBC));
+        BC = EBBC[BCi:BCi+1,:];
+        BC = np.tile(BC, (len(x_train),1));
+        x_i = np.hstack((x_train, BC));
         with tf.GradientTape() as tape:
             tape.watch(self.trainable_variables) # trainable_variables is W (w+b)
-            loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_train, lb, ub)
+            loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_i)
             loss_val = loss_pde + loss_bc1 + loss_bc2 + loss_bc3 + loss_bc4
         grads = tape.gradient(loss_val, self.trainable_variables)
         del tape
@@ -136,29 +145,37 @@ class Sequentialmodel(tf.Module):
     def optimizer_callback(self, parameters):
         global counter
         if counter % 100 == 0:
-            loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_train, lb, ub)
-            u_pred = self.evaluate(x_test)
-            error_vec = np.linalg.norm((u-u_pred),2)/np.linalg.norm(u,2)
-            tf.print(counter, loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4, error_vec)
+            BCi =np.random.randint(len(EBBC));
+            BC = EBBC[BCi:BCi+1,:];
+            BC = np.tile(BC, (len(x_train),1));
+            x_i = np.hstack((x_train, BC));
+            loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_i)
+            tf.print(counter, loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4)
         counter += 1
+        
 ##############################################################################
 # DATA PREP #
-train = np.loadtxt("train.dat")
-test = np.loadtxt("test.dat")
-x_train = train[:,0:1]
-x_test = test[:,0:1]
+'''EBBC = np.array([[1, 1, 0, 0],
+                 [0, 0, 1, 1],
+                 [1, 1, 1, 0],
+                 [1, 0, 1, 1],
+                 [1, 1, 1, 1],
+                 [1, 0, 1, 0]]);'''
+    
+EBBC = np.array([[1, 1, 1, 1],
+                 [1, 1, 1, 1],
+                 [1, 1, 1, 1],
+                 [1, 1, 1, 1],
+                 [1, 1, 1, 1],
+                 [1, 1, 1, 1]]);
+x_train = np.arange(0,1.05,0.05)[:,None];
+
 counter = 0
-u = x_test**2  * (6 - 4*x_test +x_test**2)/ 24
 
-
-
-lb = np.array([np.min(x_train)])[:,None]
-ub = np.array([np.max(x_train)])[:,None]
 
 ##############################################################################
 # MODEL TRAINING AND TESTING #
-
-layers = np.array([1,20,20,20,1]) 
+layers = np.array([5,20,20,20,1])
 PINN = Sequentialmodel(layers)
 init_params = PINN.get_weights().numpy() 
 start_time = time.time()
@@ -183,21 +200,22 @@ print('Training time: %.2f' %(elapsed))
 
 PINN.set_weights(results.x)
 
-x_train = x_train[x_train[:, 0].argsort()]
-x_test = x_test[x_test[:, 0].argsort()]
+BC = np.array([[1,1,1,1]]);
+BC = np.tile(BC, (len(x_train),1));
+x_i = np.hstack((x_train, BC));
 
-y_train = PINN.evaluate(x_train)
-y_test = PINN.evaluate(x_test)
+
+y_i = PINN.evaluate(x_i)
 
 fig, ax = plt.subplots()
 
-ax.plot(x_train, y_train,'bo', linewidth=2.0)
-ax.plot(x_test, y_test, linewidth=2.0)
+ax.plot(x_i, y_i,'bo', linewidth=2.0)
 ax.set(xlim=(-0.1, 1.1), xticks=np.arange(0, 1),
-       ylim=(-0.2, 0.1), yticks=np.arange(-0.2, 0.1))
-
+       ylim=(-0.0027, 0.0001), yticks=np.arange(-0.0027, 0.0001))
 plt.show()
 
+y_max = PINN.evaluate(np.array([[1/2, 1, 1, 1, 1]]))
+#tf.print(y_max)
 
 
 

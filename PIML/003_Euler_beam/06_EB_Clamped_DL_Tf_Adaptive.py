@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jan  4 00:56:46 2023
+
+@author: nguyenvanduc
+"""
+
 import tensorflow as tf
 import datetime, os
 #hide tf logs
@@ -36,7 +44,10 @@ class Sequentialmodel(tf.Module):
             self.W.append(w)
             self.W.append(b)
             self.parameters += input_dim * output_dim + output_dim
-            
+        self.lagrange_1 = tf.Variable(tf.cast(tf.ones([4,1]), dtype = 'float64'), trainable = True) # 4 boundary points
+        self.lagrange_2 = tf.Variable(tf.cast(tf.ones([26,1]), dtype = 'float64'), trainable = True) # 26 train points
+
+    
     def evaluate(self,x):
         x = (x-lb)/(ub-lb)
         a = x
@@ -77,15 +88,13 @@ class Sequentialmodel(tf.Module):
             u_lb = self.evaluate(x_lb)
             u_ub = self.evaluate(x_ub)
             
-            u_ub_x = tape.gradient(u_ub,x_ub)
-            u_ub_xx = tape.gradient(u_ub_x,x_ub)
-            u_ub_xxx = tape.gradient(u_ub_xx,x_ub)
+        u_ub_x = tape.gradient(u_ub,x_ub)
         u_lb_x = tape.gradient(u_lb,x_lb)
         del tape
-        loss_bc1 = tf.reduce_mean(tf.square(u_lb))
-        loss_bc2 = tf.reduce_mean(tf.square(u_lb_x))
-        loss_bc3 = tf.reduce_mean(tf.square(u_ub_xx))
-        loss_bc4 = tf.reduce_mean(tf.square(u_ub_xxx))
+        loss_bc1 = tf.reduce_mean(tf.square(self.lagrange_1[0]*u_lb))
+        loss_bc2 = tf.reduce_mean(tf.square(self.lagrange_1[1]*u_lb_x))
+        loss_bc3 = tf.reduce_mean(tf.square(self.lagrange_1[2]*u_ub))
+        loss_bc4 = tf.reduce_mean(tf.square(self.lagrange_1[3]*u_ub_x))
         return loss_bc1, loss_bc2, loss_bc3, loss_bc4
     
     def loss_PDE(self, x_to_train_f):
@@ -104,6 +113,7 @@ class Sequentialmodel(tf.Module):
         
         # Burgers equation:u + u*u_x - nu*u_xx = 0, IC: -sin(pi*x)
         f = u_xxxx + 1 
+        f = self.lagrange_2 * f
         loss_f = tf.reduce_mean(tf.square(f))
         return loss_f
     
@@ -137,20 +147,38 @@ class Sequentialmodel(tf.Module):
         global counter
         if counter % 100 == 0:
             loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_train, lb, ub)
-            u_pred = self.evaluate(x_test)
-            error_vec = np.linalg.norm((u-u_pred),2)/np.linalg.norm(u,2)
-            tf.print(counter, loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4, error_vec)
+            tf.print(counter, loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4)
         counter += 1
+    
+    
+    def adaptive_gradients(self):
+        
+        with tf.GradientTape() as tape:
+            tape.watch(self.W)
+            loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_train, lb, ub)
+            loss_val = loss_pde + loss_bc1 + loss_bc2 + loss_bc3 + loss_bc4    
+        grads = tape.gradient(loss_val,self.W)
+        del tape
+
+        with tf.GradientTape(persistent = True) as tape:
+            tape.watch(self.lagrange_1)
+            tape.watch(self.lagrange_2)
+            loss_pde, loss_bc1, loss_bc2, loss_bc3, loss_bc4 = self.loss(x_train, lb, ub)
+            loss_val = loss_pde + loss_bc1 + loss_bc2 + loss_bc3 + loss_bc4
+        grads_L1 = tape.gradient(loss_val,self.lagrange_1) # boundary terms
+        grads_L2 = tape.gradient(loss_val,self.lagrange_2) # residual terms
+        del tape
+        
+        return loss_val, grads, grads_L1, grads_L2
+        
 ##############################################################################
 # DATA PREP #
 train = np.loadtxt("train.dat")
 test = np.loadtxt("test.dat")
 x_train = train[:,0:1]
 x_test = test[:,0:1]
+
 counter = 0
-u = x_test**2  * (6 - 4*x_test +x_test**2)/ 24
-
-
 
 lb = np.array([np.min(x_train)])[:,None]
 ub = np.array([np.max(x_train)])[:,None]
@@ -162,6 +190,33 @@ layers = np.array([1,20,20,20,1])
 PINN = Sequentialmodel(layers)
 init_params = PINN.get_weights().numpy() 
 start_time = time.time()
+
+###################
+# Self adaptive
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07)
+
+optimizer_L1 = tf.keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07)
+
+optimizer_L2 = tf.keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07)
+
+num_epochs = 2500
+
+for epoch in range(num_epochs):
+    
+        loss_value, grads, grads_L1, grads_L2 = PINN.adaptive_gradients()
+
+        if epoch % 100 == 0:
+            tf.print(loss_value)
+        
+        optimizer.apply_gradients(zip(grads, PINN.W)) #gradient descent weights 
+        optimizer_L1.apply_gradients(zip([-grads_L1], [PINN.lagrange_1])) # gradient ascent adaptive coefficients of boundary residual
+        optimizer_L2.apply_gradients(zip([-grads_L2], [PINN.lagrange_2])) # gradient ascent adaptive coefficients of PDE residual
+              
+init_params = PINN.get_weights().numpy()
+
+
+###################
+
 # train the model with Scipy L-BFGS optimizer
 results = scipy.optimize.minimize(fun=PINN.optimizerfunc,
                                   x0 = init_params,
@@ -173,18 +228,19 @@ results = scipy.optimize.minimize(fun=PINN.optimizerfunc,
                                           'maxcor': 200,
                                           'ftol': 1*np.finfo(float).eps,
                                           'gtol': 5e-8,
-                                          'maxfun': 10000, 
+                                          'maxfun': 50000, 
                                           'maxiter': 5000, 
                                           'iprint': -1,
-                                          'maxls': 20})
+                                          'maxls': 50})
 
 elapsed = time.time() - start_time
 print('Training time: %.2f' %(elapsed))
 
-PINN.set_weights(results.x)
+print(results)
 
 x_train = x_train[x_train[:, 0].argsort()]
 x_test = x_test[x_test[:, 0].argsort()]
+
 
 y_train = PINN.evaluate(x_train)
 y_test = PINN.evaluate(x_test)
@@ -194,12 +250,13 @@ fig, ax = plt.subplots()
 ax.plot(x_train, y_train,'bo', linewidth=2.0)
 ax.plot(x_test, y_test, linewidth=2.0)
 ax.set(xlim=(-0.1, 1.1), xticks=np.arange(0, 1),
-       ylim=(-0.2, 0.1), yticks=np.arange(-0.2, 0.1))
+       ylim=(-0.0027, 0.0001), yticks=np.arange(-0.0027, 0.0001))
 
 plt.show()
 
-
-
+y_max = PINN.evaluate([[1/2]])
+y_e  = 1/384
+tf.print(y_max, y_e)
 
 
 
